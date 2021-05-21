@@ -1,6 +1,6 @@
 resource "null_resource" "null_tfvars" {
  triggers = {
-   tfvars = file("/terraform/terraform.tfvars")
+   tfvars = file("terraform.tfvars")
  }
 }
 

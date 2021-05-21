@@ -8,7 +8,7 @@ We have two script to support to different scenarios:
     
     Example usage:
     ```
-    python3 TF_attack.py --hostname XXX
+    python3 TF_attack.py --hostname app.terraform.io --organization test_org --workspace test_workspace --get_envs
     ```
 
 * **PR_attack.py**: When you don't have direct access, or you don't have a token, but you can do a PR to a github repository linked to TFC/TFE and plans are run automatically.
