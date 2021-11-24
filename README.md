@@ -15,5 +15,5 @@ We have two script to support to different scenarios:
 
     Example usage:
     ```
-    python3 PR_attack.py
+    python3 PR_attack.py --repo https://github.com/user/repo/folder/ --get_envs
     ```
