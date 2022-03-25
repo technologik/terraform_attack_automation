@@ -203,25 +203,30 @@ def run_speculative_plan(tmp_folder, targets):
     # We need to create that folder and move the files there
     if "can't cd to /terraform/" in output:
         target_dir = re.search("can't cd to /terraform/(.*)", output).group(1)
-        print(f"[+] Workspace is configured to use a folder relative to the target repository, creating and moving files to: {target_dir}")        
-        # Creating folder 
-        target_dir = os.path.join(tmp_folder, target_dir)
-        os.mkdir(target_dir)
+        print(f"[+] Workspace is configured to use a folder relative to the target repository: {target_dir}")
+        print("[+] Rerun this command with the --folder option, using the directory like so: ")
+        print(f" --folder {target_dir}")
+        exit(-1)
+        
+        # ToDo: Delete this
+        # # Creating folder 
+        # target_dir = os.path.join(tmp_folder, target_dir)
+        # os.mkdir(target_dir)
 
-        # Moving all .tf files to that folder
-        for file in glob.glob(tmp_folder + '/*.tf'):
-            # We need to leave the backend.tf at the root
-            if "backend.tf" in file:
-                continue 
-            shutil.move(file, target_dir)
+        # # Moving all .tf files to that folder
+        # for file in glob.glob(tmp_folder + '/*.tf'):
+        #     # We need to leave the backend.tf at the root
+        #     if "backend.tf" in file:
+        #         continue 
+        #     shutil.move(file, target_dir)
 
-        #move all *.tf to target_dir
-        command = f"terraform plan -no-color {targets_args}"
-        print(f"[+] Executing: {command}")
-        output = subprocess.run(command.split(), cwd=tmp_folder, stdout=subprocess.PIPE).stdout
-        output = output.decode('ascii')
-        if VERBOSE:
-            print(f"[+] Output: {output}")
+        # #move all *.tf to target_dir
+        # command = f"terraform plan -no-color {targets_args}"
+        # print(f"[+] Executing: {command}")
+        # output = subprocess.run(command.split(), cwd=tmp_folder, stdout=subprocess.PIPE).stdout
+        # output = output.decode('ascii')
+        # if VERBOSE:
+        #     print(f"[+] Output: {output}")
 
     return output
     
@@ -283,7 +288,7 @@ def main():
         get_state_file(tmp_folder, args.folder, args.get_state_file_from_workspace)
   
     # Remove temporal folder
-    #shutil.rmtree(tmp_folder)
+    shutil.rmtree(tmp_folder)
 
 if __name__ == "__main__":
     main()
