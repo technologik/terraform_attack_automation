@@ -206,8 +206,9 @@ def run_speculative_plan(tmp_folder, targets):
         print(f"[+] Workspace is configured to use a folder relative to the target repository: {target_dir}")
         print("[+] Rerun this command with the --folder option, using the directory like so: ")
         print(f" --folder {target_dir}")
+        shutil.rmtree(tmp_folder)
         exit(-1)
-        
+
         # ToDo: Delete this
         # # Creating folder 
         # target_dir = os.path.join(tmp_folder, target_dir)
