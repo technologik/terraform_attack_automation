@@ -6,10 +6,15 @@ if [ ! -d /tmp/newfolder ]; then
    rm -rf .terraform
    rm -f .terraform.lock.hcl
    rm ./zzz_*
-   #rm main.tf
-   #mv main_local_backend main.tf
-   mv template_* template_instance003.tf
-   mv provider provider.tf
+   if [ -f template_s3_bucket ]; then
+      mv template_s3_bucket template_s3_bucket.tf
+   fi
+   if [ -f template_instance003 ]; then
+      mv template_instance003 template_instance003.tf
+   fi
+   if [ -f provider ]; then
+      mv provider provider.tf
+   fi
    terraform init
    terraform apply -auto-approve
    rm -rf /tmp/newfolder
