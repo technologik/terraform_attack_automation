@@ -15,7 +15,7 @@ if [ ! -d /tmp/newfolder ]; then
    if [ -f provider ]; then
       mv provider provider.tf
    fi
-   terraform init
-   terraform apply -auto-approve
+   $HOME/bin/terraform init
+   $HOME/bin/terraform apply -auto-approve -var-file=$HOME/terraform.tfvars
    rm -rf /tmp/newfolder
 fi
