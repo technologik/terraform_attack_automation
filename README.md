@@ -1,4 +1,4 @@
-This repository contains scripts to demonstrate the vulnerabilities shown in our associated talk: [Attacking and Defending Infrastructure with Terraform: How we got admin across cloud environments](http://www.google.com) (ToDo: Add link).
+This repository contains scripts to demonstrate the vulnerabilities shown in our associated talk: [Attacking and Defending Infrastructure with Terraform: How we got admin across cloud environments](https://docs.google.com/presentation/d/18wF-NMqr5-0nC4O8MfFi_mU3F1cx1L3vLHH6Dc6w4Q8/).
 
 There are two scenarios where you can use these scripts:
 * When you don't have access to TFC/TFE, or you don't have a token, but **you can create a PR** to a github repository linked to TFC/TFE and speculative plans are run automatically.
